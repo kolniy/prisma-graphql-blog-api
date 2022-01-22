@@ -1,9 +1,10 @@
 const fs = require('fs')
 const path = require('path')
-const { ApolloServer, gql } = require('apollo-server');
+const { ApolloServer, gql, PubSub } = require('apollo-server');
 const { PrismaClient } = require("@prisma/client")
 
 const prisma = new PrismaClient()
+const pubsub = new PubSub()
 
 // async function main() {
         // await prisma.user.create({
@@ -67,6 +68,22 @@ const resolvers = {
                }
            })
            return posts
+       },
+       async comments(parent, { post }, context, info){
+            const validPost  = await prisma.post.findFirst({
+                where: {
+                    id: post
+                }
+            })
+            if(!validPost){
+                throw new Error("post not found")
+            }
+            const comments = await prisma.comment.findMany({
+                where: {
+                    postid: post
+                }
+            })
+            return comments
        }
     },
     Mutation: {
@@ -150,15 +167,163 @@ const resolvers = {
             })
 
             return comment
-       }
+       },
+    async updateUser(parent, { id, data }, context, info){
+        const validUser = await prisma.user.findUnique({
+            where: {
+                id
+            }
+        })
+        if(!validUser){
+            throw new Error("user not found")
+        }
+        const updates = {}
+        if(data.name){
+            updates['name'] = data.name
+        }
+        if(data.age){
+            updates['age'] = data.age
+        }
+        const updatedUser = await prisma.user.update({
+            where: {
+                id
+            },
+            data: updates
+        })
+        return updatedUser
+    },
+    async updatePost(parent, { id, data }, context, info){
+        const validPost = await prisma.post.findUnique({
+            where: {
+                id
+            }
+        })
+        if(!validPost){
+            throw new Error("post not found")
+        }
+        const postUpdates = {}
+        if(data.title){
+            postUpdates['title'] = data.title
+        }
+        if(data.body){
+            postUpdates['body'] = data.body
+        }
+        if(data.published){
+            postUpdates['published'] = data.published
+        }
+        const updatedPost = await prisma.post.update({
+            where: {
+                id
+            },
+            data: postUpdates
+        })
+        return updatedPost
+    },
+    async updateComment(parent, { id, data }, context, info){
+        const validComment = await prisma.comment.findUnique({
+            where: {
+                id
+            }
+        })
+        if(!validComment){
+            throw new Error("comment not found")
+        }
+        const commentUpdates = {}
+        if(typeof data.comment === 'string'){
+            commentUpdates['comment'] = data.comment
+        }
+        const updatedComment = await prisma.comment.update({
+            where: {
+                id
+            },
+            data: commentUpdates
+        })
+        return updatedComment
+    },
+    async deleteUser(parent, { id }, context, info){
+        const deletePosts = prisma.post.deleteMany({
+            where: {
+                authorId: id
+            }
+        })
+
+        const deleteComments = prisma.comment.deleteMany({
+            where: {
+                commenterid: id
+            }
+        })
+
+        const deleteUser = prisma.user.delete({
+            where: {
+                id
+            }
+        })
+        const user = await prisma.user.findUnique({
+            where: {
+                id
+            }
+        })
+        const transaction = await prisma.$transaction([deleteComments, deletePosts, deleteUser])
+        return user
+    }, 
+    async deletePost(parent, { id }, context, info){
+        const validPost = await prisma.post.findUnique({
+            where: {
+                id
+            }
+        })
+        if(!validPost){
+            throw new Error("post not found")
+        }
+        const deleteComments = prisma.comment.deleteMany({
+            where: {
+                postid: id  
+            }
+        })
+        const deletePost = prisma.post.delete({
+            where: {
+                id
+            }
+        })
+        const transaction = await prisma.$transaction([deleteComments, deletePost])
+        return validPost
+    },
+    async deleteComment(parent, { id }, context, info){
+        const validComment = await prisma.comment.findUnique({
+            where: {
+                id
+            }
+        })
+        if(!validComment){
+            throw new Error("comment not found")
+        }
+        await prisma.comment.delete({
+            where: {
+                id
+            }
+        })
+        return validComment
+    }
+    },
+    Subscription: {
+        comment: {
+            subscribe(parent, args, context, info){
+
+            }
+        },
+        post: {
+            subscribe(parent, args, context, info){
+                
+            }
+        }
     },
     User: {
       async posts(parent, args, context, info){
-        const posts = await prisma.user.findUnique({
+        const posts = await prisma.post.findMany({
             where: {
-                id: parent.id
+                authorId: parent.id
             }
-        }).posts()
+        })
         return posts
       },
       async comments(parent, args, context, info){
@@ -209,6 +374,9 @@ const resolvers = {
 }
 
 const server = new ApolloServer({
+    subscriptions: {
+        path: '/subscription'
+    },
     typeDefs: fs.readFileSync(path.join(__dirname, 'schema.graphql'), 'utf-8'),
     resolvers
 })
